@@ -1,0 +1,11 @@
+{
+  "http": {
+    "port": 8081
+  },
+  "auth": {
+    "issuer": "backend",
+    "jwtSecret": "ef06605f9628de06c9a4f2840abd86055b862e7b2e9d6775214b25879523e1db",
+    "refreshTokenExpiry": "15780000",
+    "accessTokenExpiry": "36000"
+  }
+}
