@@ -20,11 +20,15 @@
 
 import { NextFunction, Request, Response } from 'express';
 import Config from 'config';
+import * as Bcrypt from 'bcrypt';
 import Jwt from 'jsonwebtoken';
 import * as Log from 'winston';
-import { access } from 'fs';
-import { log } from 'console';
+import { v4 as uuidv4 } from 'uuid';
+
+import { RefreshTokenModel, UserModel } from '@/models';
 import { User } from '@/models/user';
+import { use } from 'passport';
+import { Document, Model } from 'mongoose';
 
 enum TokenSubject {
   Access,
@@ -33,6 +37,71 @@ enum TokenSubject {
 
 interface TokenError extends Error {
   statusCode?: number,
+}
+
+/**
+ * Issue a new token to a user 
+ * @param user User to issue a token for
+ */
+async function IssueRefreshToken(user: User): Promise<string> {
+  // Generate a new uuid for this token
+  let expiry = new Date();
+  expiry.setSeconds(expiry.getSeconds() + Config.get<number>('auth.refreshTokenExpiry'));
+
+  return RefreshTokenModel.create({
+    id: uuidv4(),
+    user: user._id,
+    expiry: expiry
+  })
+    .then((document) => new Promise((resolve, reject) => {
+      Jwt.sign(
+        { id: document.id },
+        Config.get<string>('auth.jwtSecret'),
+        {
+          algorithm: 'HS256',
+          subject: 'refresh',
+          issuer: Config.get('auth.issuer'),
+        },
+        (error, token) => {
+          if (error) {
+            reject(error);
+          } else if (!token) {
+            reject(new Error('NoTokenProduced'));
+          } else {
+            resolve(token);
+          }
+        },
+      );
+    })
+  );
+}
+
+function IssueAccessToken(user: User): Promise<String> {
+  return new Promise((resolve, reject) => {
+    Jwt.sign(
+      {
+        name: user.name,
+        email: user.email,
+        canPublish: user.canPublish,
+      },
+      Config.get<string>('auth.jwtSecret'),
+      {
+        algorithm: 'HS256',
+        subject: 'access',
+        expiresIn: Config.get<number>('auth.accessTokenExpiry')  * 1000,
+        issuer: Config.get('auth.issuer'),
+      },
+      (error, token) => {
+        if (error) {
+          reject(error);
+        } else if (!token) {
+          reject(new Error('NoTokenProduced'));
+        } else {
+          resolve(token);
+        }
+      },
+    );
+  });
 }
 
 /**
@@ -64,7 +133,6 @@ function ValidateToken(token: string, subject: TokenSubject): Promise<Jwt.JwtPay
         } as TokenError);
       }
 
-      
       // Check the issuer is correct
       let contents = payload as Jwt.JwtPayload;
       if (contents.iss !== Config.get('auth.issuer')) {
@@ -73,7 +141,6 @@ function ValidateToken(token: string, subject: TokenSubject): Promise<Jwt.JwtPay
           message: 'Invalid token issuer',
           statusCode: 401,
         } as TokenError);
-
       }
 
       // Check the use is correct
@@ -110,8 +177,45 @@ function ValidateToken(token: string, subject: TokenSubject): Promise<Jwt.JwtPay
  * @param req 
  * @param res 
  */
-export function Login(req: Request, res: Response) {
+export async function Login(req: Request, res: Response) {
+  // Fetch the username and password from the request
+  if (req.headers.authorization) {
+    const base64Credentials = req.headers.authorization.split(' ')[1];
+    const [username, password] = Buffer.from(base64Credentials, 'base64')
+                                       .toString('utf8')
+                                       .split(':');
+    
+    // Find the user document in mongo
+    const user = await UserModel.findOne({ email: username });
+    if (user && !!user.passwordHash) {
+      if (await Bcrypt.compare(password, user.passwordHash)) {
+        // Password correct, issue a refresh token
+        let token = await IssueRefreshToken(user);
 
+        // If the cookie query parameter is set, just set a cookie.
+        if (req.query['cookie']) {
+          res.cookie('refresh_token', token, {
+            httpOnly: true,
+            secure: true,
+            maxAge: Config.get<number>('auth.refreshTokenExpiry') * 1000,
+          })
+          return res.sendStatus(204);
+        } else {
+          // Otherwise just return the token
+          return res.send(token);
+        }
+      } else {
+        Log.debug(`Password for user ${username} incorrect`);
+        return res.sendStatus(401);
+      }
+    } else {
+      Log.debug(`Username '${username}' not found in database`);
+      return res.sendStatus(401);
+    }
+  } else {
+      Log.debug('No authentication header provided');
+      return res.sendStatus(401);
+  }
 }
 
 /**
@@ -125,9 +229,9 @@ export function Login(req: Request, res: Response) {
 export function GetAccessToken(req: Request, res: Response) {
   // The refresh token could either be in a cookie, or in the auth header
   let token: string | null = null;
-  if (req.cookies['refresh-token']) {
+  if (req.cookies['refresh_token']) {
     Log.debug('Getting token from cookie');
-    token = req.cookies['refresh-token'];
+    token = req.cookies['refresh_token'];
   } else if (req.headers['authorization']) {
     Log.debug('Getting token from header');
     token = req.headers['authorization'];
@@ -144,10 +248,33 @@ export function GetAccessToken(req: Request, res: Response) {
       // Extract the ID
       let id = payload['id'];
 
-      // TODO Fetch the 
+      // Fetch the refresh token entry
+      return RefreshTokenModel.findOne({ id });
     })
-    .catch((err) => {
+    .then((rtDocument) => {
+      if (!rtDocument) {
+        Log.debug('Unable to find refresh token with ID')
+        throw new Error("InvalidToken");
+      }
 
+      // Grab the user id
+      let userId = rtDocument.user;
+      return UserModel.findById(userId);
+    })
+    .then((user) => {
+      if (!user) {
+        throw new Error("InvalidToken");
+      }
+      return IssueAccessToken(user);
+    })
+    .then((token) => res.send(token))
+    .catch((err) => {
+      if (err.message && err.message == "InvalidToken") {
+        res.sendStatus(401);
+      } else {
+        Log.error(`Error  in GetAccessToken: ${err}`);
+        res.sendStatus(500);
+      }
     });
 }
 
@@ -265,4 +392,8 @@ export function AuthoriseUser(req: Request, res: Response, next: NextFunction) {
   }
 
   return next();
+}
+
+export function GetUser(req: Request, res: Response) {
+  res.json(req.user);
 }

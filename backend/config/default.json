@@ -1,11 +1,13 @@
 {
+  "logLevel": "debug",
   "http": {
-    "port": 8081
+    "port": 8085
   },
   "auth": {
-    "issuer": "backend",
+    "issuer": "localhost",
     "jwtSecret": "ef06605f9628de06c9a4f2840abd86055b862e7b2e9d6775214b25879523e1db",
     "refreshTokenExpiry": "15780000",
     "accessTokenExpiry": "36000"
-  }
+  },
+  "mongoUrl": "mongodb://root:example@localhost:27017/blog"
 }

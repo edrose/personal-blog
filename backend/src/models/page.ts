@@ -5,6 +5,7 @@
 import { Schema, model, Types } from 'mongoose';
 
 export interface Page {
+  _id: Schema.Types.ObjectId,
   title: string,
   path: string,
   published: boolean,
@@ -14,7 +15,7 @@ export interface Page {
 
 const pageSchema = new Schema<Page>({
   title: { type: String, required: true },
-  path: { type: String, required: true },
+  path: { type: String, required: true, unique: true },
   published: { type: Boolean, required: true },
   author: { type: Schema.Types.ObjectId, required: true },
   contents: { type: String, required: true },
