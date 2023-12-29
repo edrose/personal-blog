@@ -23,16 +23,13 @@ import Config from 'config';
 import * as Bcrypt from 'bcrypt';
 import Jwt from 'jsonwebtoken';
 import * as Log from 'winston';
-import { v4 as uuidv4 } from 'uuid';
 
-import { RefreshTokenModel, UserModel } from '@/models';
-import { User } from '@/models/user';
-import { use } from 'passport';
-import { Document, Model } from 'mongoose';
+import { UserModel } from '@/models';
+import { User, UserRole, UserToken } from '@/models/user';
 
 enum TokenSubject {
-  Access,
-  Refresh,
+  Access = 'access',
+  Refresh = 'refresh',
 }
 
 interface TokenError extends Error {
@@ -40,22 +37,21 @@ interface TokenError extends Error {
 }
 
 /**
- * Issue a new token to a user 
+ * @brief Issue a new refresh token to a user 
  * @param user User to issue a token for
+ * @returns A string containing the refresh token for the user
  */
 async function IssueRefreshToken(user: User): Promise<string> {
   // Generate a new uuid for this token
   let expiry = new Date();
   expiry.setSeconds(expiry.getSeconds() + Config.get<number>('auth.refreshTokenExpiry'));
 
-  return RefreshTokenModel.create({
-    id: uuidv4(),
-    user: user._id,
-    expiry: expiry
-  })
-    .then((document) => new Promise((resolve, reject) => {
+  let token_document = user.tokens.create({ expiry });
+  user.tokens.push(token_document);
+  return user.save()
+    .then(() => new Promise((resolve, reject) => {
       Jwt.sign(
-        { id: document.id },
+        { id: token_document.id },
         Config.get<string>('auth.jwtSecret'),
         {
           algorithm: 'HS256',
@@ -76,13 +72,18 @@ async function IssueRefreshToken(user: User): Promise<string> {
   );
 }
 
+/**
+ * @brief Issue an access token to a user
+ * @param user User to issue the token for
+ * @returns A string containing the access token
+ */
 function IssueAccessToken(user: User): Promise<String> {
   return new Promise((resolve, reject) => {
     Jwt.sign(
       {
         name: user.name,
         email: user.email,
-        canPublish: user.canPublish,
+        role: user.role,
       },
       Config.get<string>('auth.jwtSecret'),
       {
@@ -105,7 +106,7 @@ function IssueAccessToken(user: User): Promise<String> {
 }
 
 /**
- * Validate that the provided token is valid
+ * @brief Validate that the provided token is valid
  * 
  * Checks that the token is valid, hasn't expired, and has the correct subject
  * for the intended use.
@@ -170,12 +171,12 @@ function ValidateToken(token: string, subject: TokenSubject): Promise<Jwt.JwtPay
 }
 
 /**
- * Authenticate a user and issue a refresh token
+ * @brief Authenticate a user and issue a refresh token
  * 
  * Accepts the user's email and password, validates them, and issues a 
  * refresh token than can be used to obtain an access token.
- * @param req 
- * @param res 
+ * @param req Express request object
+ * @param res Express response object
  */
 export async function Login(req: Request, res: Response) {
   // Fetch the username and password from the request
@@ -219,12 +220,12 @@ export async function Login(req: Request, res: Response) {
 }
 
 /**
- * Get an access token for a user
+ * @brief Get an access token for a user
  * 
  * Accepts a refresh token, and issues an access token that can be used to
  * authenticate API calls.
- * @param req 
- * @param res 
+ * @param req Express request object
+ * @param res Express response object
  */
 export function GetAccessToken(req: Request, res: Response) {
   // The refresh token could either be in a cookie, or in the auth header
@@ -242,29 +243,32 @@ export function GetAccessToken(req: Request, res: Response) {
     return res.sendStatus(401);
   }
 
+  // The token id
+  let id: String | null = null;
+
   // Validate the token
   ValidateToken(token, TokenSubject.Refresh)
     .then((payload) => {
       // Extract the ID
-      let id = payload['id'];
+      id = payload['id'];
 
       // Fetch the refresh token entry
-      return RefreshTokenModel.findOne({ id });
+      return UserModel.findOne({ "tokens._id": id });
     })
-    .then((rtDocument) => {
-      if (!rtDocument) {
+    .then((user) => {
+      if (!user) {
         Log.debug('Unable to find refresh token with ID')
         throw new Error("InvalidToken");
       }
 
-      // Grab the user id
-      let userId = rtDocument.user;
-      return UserModel.findById(userId);
-    })
-    .then((user) => {
-      if (!user) {
-        throw new Error("InvalidToken");
+      // Check the token expiry
+      let token = user.tokens.find((t) => t._id == id);
+      if (!token) {
+        Log.error("Token not found second time around");
+        throw "";
       }
+
+      // Issue the access token
       return IssueAccessToken(user);
     })
     .then((token) => res.send(token))
@@ -279,7 +283,7 @@ export function GetAccessToken(req: Request, res: Response) {
 }
 
 /**
- * Middleware that performs authentication on requests
+ * @brief Middleware that performs authentication on requests
  * 
  * The access token is pulled out of the request, if it exists, and the jwt
  * is validated. If validation succeeds, the contents of the tokens payload
@@ -337,14 +341,14 @@ export function AuthenticateRequest(req: Request, res: Response, next: NextFunct
     }
 
     // Construct a user object with the contents
-    let user: User = {
+    let user: UserToken = {
       name: accessToken['name'],
       email: accessToken['email'],
-      canPublish: accessToken['canPublish'],
+      role: accessToken['role'],
     };
 
     // Check the required fields exist
-    if (!user.name || !user.email || !user.canPublish) {
+    if (!user.name || !user.email || !user.role) {
       Log.error(`Token payload missing required fields`)
       return res.sendStatus(401);
     }
@@ -357,18 +361,18 @@ export function AuthenticateRequest(req: Request, res: Response, next: NextFunct
 }
 
 /**
- * Middleware for authenticating an admin
+ * @brief Middleware for authenticating an admin
  * 
  * Middleware that will only allow the request to proceed if the request is 
  * authenticated and the current user is an admin.
- * @param req 
- * @param res 
- * @param next 
+ * @param req Express request object
+ * @param res Express response object
+ * @param next Express next function
  * @returns 
  */
 export function AuthoriseAdmin(req: Request, res: Response, next: NextFunction) {
   // Check that a valid token was provided for an admin account
-  if (!req.user || !req.user.canPublish) {
+  if (!req.user || req.user.role !== UserRole.Admin) {
     return res.sendStatus(403);
   }
 
@@ -376,14 +380,13 @@ export function AuthoriseAdmin(req: Request, res: Response, next: NextFunction) 
 }
 
 /**
- * Middleware for authenticating a user
+ * @brief Middleware for authenticating a user
  * 
  * Middleware that will only allow the request to proceed if the request is 
  * authenticated.
- * @param req 
- * @param res 
- * @param next 
- * @returns 
+ * @param req Express request object
+ * @param res Express response object
+ * @param next Express next function
  */
 export function AuthoriseUser(req: Request, res: Response, next: NextFunction) {
   // Check that a valid token was provided
@@ -394,6 +397,11 @@ export function AuthoriseUser(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
+/**
+ * @brief Fetch information about the currently logged in user
+ * @param req Express request object
+ * @param res Express response object
+ */
 export function GetUser(req: Request, res: Response) {
   res.json(req.user);
 }

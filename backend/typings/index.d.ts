@@ -7,6 +7,6 @@ import * as UserModel from '@/models/user';
 declare global {
     namespace Express {
         // Override the User interface with our model
-        export interface User extends UserModel.User {}
+        export interface User extends UserModel.UserToken {}
     }
 }
