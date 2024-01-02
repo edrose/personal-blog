@@ -1,0 +1,4 @@
+{
+  "logLevel": "debug",
+  "mongoUrl": "mongodb://root:example@localhost:27017/blog-test"
+}

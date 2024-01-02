@@ -10,6 +10,7 @@ import * as Log from 'winston';
 
 import * as Auth from './auth';
 import * as Menu from './menu';
+import * as Page from './page';
 
 export enum HttpMethods {
   Get,
@@ -50,4 +51,5 @@ export function MethodNotAllowed(allowedMethods: Array<HttpMethods>) {
 export {
   Auth,
   Menu,
+  Page,
 }

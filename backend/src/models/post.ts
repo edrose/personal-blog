@@ -4,7 +4,10 @@
 
 import { Schema, model, Types } from 'mongoose';
 
-export interface Comment {
+/**
+ * @brief SubDocument for a comment on a post
+ */
+export interface Comment extends Types.Subdocument {
   user: string,
   date: Date,
   comment: string,
@@ -16,8 +19,10 @@ const commentSchema = new Schema<Comment>({
   comment: { type: String, required: true },
 });
 
-export interface Post {
-  _id?: Schema.Types.ObjectId,
+/**
+ * @brief SubDocument for a post to the blog
+ */
+export interface Post extends Document {
   title: string,
   slug: string,
   date: Date,

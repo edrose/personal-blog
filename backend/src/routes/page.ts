@@ -6,14 +6,18 @@
  */
 
 import { Router } from 'express';
-import { NotImplemented } from '@/controller'
+import { NotImplemented, Page as PageController } from '@/controller'
 
 // Create the new router
 const router = Router();
 
 // Get all pages that are available
-router.get('/', NotImplemented);
+router.get('/', PageController.GetAllPages);
 
-router.get('/:slug', NotImplemented);
+// Get the contents of a single page
+router.get('/:slug', PageController.GetSinglePage);
+
+// Fetch the page style as a css stylesheet
+router.get('/:slug/style', PageController.GetPageStyle);
 
 export default router;

@@ -4,13 +4,25 @@
 
 import { Schema, model, Types } from 'mongoose';
 
-export interface Page {
-  _id: Schema.Types.ObjectId,
+/**
+ * @brief Represents the metadata for a page
+ */
+export interface PageMetadata {
   title: string,
   path: string,
   published: boolean,
   author: Types.ObjectId,
+}
+
+/**
+ * @brief A model to define a static page on the website
+ * 
+ * A page is like a post, but doesn't appear in searches and isn't
+ * included in the post listings.
+ */
+export interface Page extends PageMetadata, Document {
   contents: string,
+  style: string,
 }
 
 const pageSchema = new Schema<Page>({
@@ -19,6 +31,7 @@ const pageSchema = new Schema<Page>({
   published: { type: Boolean, required: true },
   author: { type: Schema.Types.ObjectId, required: true },
   contents: { type: String, required: true },
+  style: { type: String, required: false }
 });
 
 export default model<Page>('Page', pageSchema);

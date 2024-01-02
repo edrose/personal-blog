@@ -8,9 +8,9 @@ import { ErrorHandler } from '@/controller';
 import { MenuModel } from '@/models';
 
 /**
- * Get a list of all menus available on the system
- * @param req 
- * @param res 
+ * @brief Get a list of all menus available on the system
+ * @param req Express request object
+ * @param res Express response object
  */
 export function GetMenuList(req: Request, res: Response) {
   MenuModel.find()
@@ -19,6 +19,11 @@ export function GetMenuList(req: Request, res: Response) {
     .catch(err => ErrorHandler(req, res, err));
 }
 
+/**
+ * @brief Return the full data behind a menu
+ * @param req Express request object
+ * @param res Express response object
+ */
 export function GetMenu(req: Request, res: Response) {
   MenuModel.findOne({
     name: req.params.name,
@@ -31,10 +36,10 @@ export function GetMenu(req: Request, res: Response) {
             title: m.title,
             tooltip: m.tooltip,
             link: m.link,
-            children: m.children.map(c => ({
-              title: m.title,
-              tooltip: m.tooltip,
-              link: m.link,
+            children: m.subItems.map(c => ({
+              title: c.title,
+              tooltip: c.tooltip,
+              link: c.link,
             }))
           }))
         });
